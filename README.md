@@ -27,6 +27,11 @@ As a Business Analytics student at Hult, I've pivoted from building tools to unc
     - **Technologies Used:** Two-proportion z-test, two-sample t-test, and post-hoc power analysis.
     - **Results:** The redesign produced a statistically significant 10.37% relative lift in conversion rate (p = 0.0016), consistent across all device segments tested.
 
+5. [Urban Heat Index Prediction](https://github.com/hillary-mupfumi/data-science-repo/tree/main/Urban%20Heat%20Index%20Prediction)
+    - **Description:** Urban Heat Island intensity is classified into Low, Medium, and High classes using Sentinel-2 spectral indices and building footprint features, trained on Santiago and Rio de Janeiro ground data and generalized to Freetown, Sierra Leone, as part of the EY Urban Heat Island Data Challenge.
+    - **Technologies Used:** Random Forest, XGBoost, KNN, and a custom Residual MLP neural network, with cross-city feature scaling, pseudo-labeling, and spatial smoothing for the unlabeled target city.
+    - **Results:** A Residual MLP reached a macro F1 score of 0.90 on Rio de Janeiro, and a pseudo-labeled tree ensemble reached a cross-validated F1 of 0.86 on Freetown, with building density and NDBI identified as the strongest predictors of urban heat.
+
 ## Contributing
 
 Contributions are welcome! If you would like to contribute to this repository. Any improvements, bug fixes, or additional projects are greatly appreciated.
