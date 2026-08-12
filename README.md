@@ -37,6 +37,11 @@ As a Business Analytics student at Hult, I've pivoted from building tools to unc
     - **Technologies Used:** Item-based collaborative filtering via cosine similarity on a co-purchase matrix, and ALS matrix factorization on implicit purchase-quantity feedback, evaluated under a leave-last-basket-out protocol.
     - **Results:** ALS matrix factorization reached a Precision@10 of 5.26% and a MAP@10 of 2.64%, more than three times the popularity baseline's Precision@10 of 1.68%, confirming that purchase-history-based personalization adds real value over recommending bestsellers to everyone.
 
+7. [Entertainment Industry Performance Analytics](https://github.com/hillary-mupfumi/data-science-repo/tree/main/Entertainment%20Industry%20Performance%20Analytics)
+    - **Description:** The TMDB 5000 Movie Dataset and the MovieLens ml-latest-small dataset are combined to analyze the film industry from both a studio-economics and an individual-viewer engagement perspective, translating a search-engine-marketing publisher-optimization framework onto genre and studio performance and modeling individual engagement lifetime value with a BG/NBD model on real user rating histories.
+    - **Technologies Used:** A publisher-optimization quadrant framework adapted to genre and studio budget and profitability data, and BG/NBD (Beta-Geometric/Negative Binomial Distribution) survival modeling on real timestamped user ratings via the lifetimes package.
+    - **Results:** 75.57% of financially tracked films were profitable; Blumhouse Productions led all qualifying studios with a 19.81x return on investment; the BG/NBD model predicted holdout engagement volume with a Pearson correlation of 0.83; and viewers in the top predicted-engagement quartile engaged with content carrying a 45.89% higher average real budget than the bottom quartile.
+
 ## Contributing
 
 Contributions are welcome! If you would like to contribute to this repository. Any improvements, bug fixes, or additional projects are greatly appreciated.
