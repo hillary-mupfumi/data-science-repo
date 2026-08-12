@@ -47,6 +47,11 @@ As a Business Analytics student at Hult, I've pivoted from building tools to unc
     - **Technologies Used:** tidytext, quanteda, and topicmodels for tokenization, TF-IDF, bigram, and Bing/NRC sentiment analysis and LDA topic modeling, with tidymodels/klaR Naive Bayes classifiers for rating prediction.
     - **Results:** LDA topic modeling split Nike consumer discourse into four themes led by Sneaker Style & Fit at 41.00%; Bing sentiment analysis of 365,179 Airbnb description tokens found positive language outnumbering negative by roughly two to one across all nine countries; and the Nike review classifier's reported 86.20% accuracy was found to be a majority-class artifact (kappa of 0.00), predicting every held-out review as "Low" rated.
 
+9. [Power BI Dashboards](https://github.com/hillary-mupfumi/data-science-repo/tree/main/Power%20BI%20Dashboards)
+    - **Description:** Two Power BI projects are built on real operational data: a Marriott property's workforce-compliance dashboard on Kronos and When-to-Work timekeeping exports, and a furniture retailer's delivery-optimization dashboard that embeds a Python routing and cost model directly inside Power Query.
+    - **Technologies Used:** Power BI and DAX for both dashboards, with a Python bin-packing, route-permutation, and full labor/operating/holding-cost and CO2 model running inside Power Query as a "Run Python script" transform.
+    - **Results:** The workforce dashboard surfaced $314,550.00 in preventable overtime, 997 unresolved timekeeping anomalies, and 97 student workers nearing benefits-eligibility thresholds; the delivery optimization model found the retailer's flat $299.00 delivery fee covers less than one-third of the $1,071.00 true average delivery cost, while its route consolidation reduced travel by 114 miles and CO2 emissions by 47 kg against a naive baseline.
+
 ## Contributing
 
 Contributions are welcome! If you would like to contribute to this repository. Any improvements, bug fixes, or additional projects are greatly appreciated.
