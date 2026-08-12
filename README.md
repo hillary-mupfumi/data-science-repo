@@ -42,6 +42,11 @@ As a Business Analytics student at Hult, I've pivoted from building tools to unc
     - **Technologies Used:** A publisher-optimization quadrant framework adapted to genre and studio budget and profitability data, and BG/NBD (Beta-Geometric/Negative Binomial Distribution) survival modeling on real timestamped user ratings via the lifetimes package.
     - **Results:** 75.57% of financially tracked films were profitable; Blumhouse Productions led all qualifying studios with a 19.81x return on investment; the BG/NBD model predicted holdout engagement volume with a Pearson correlation of 0.83; and viewers in the top predicted-engagement quartile engaged with content carrying a 45.89% higher average real budget than the bottom quartile.
 
+8. [Text Analytics](https://github.com/hillary-mupfumi/data-science-repo/tree/main/Text%20Analytics)
+    - **Description:** Two independent NLP pipelines are built in R to mine unstructured text pulled from MongoDB: Airbnb listing descriptions across nine countries, and Nike consumer discourse from Reddit and YouTube, covering tokenization, sentiment analysis, topic modeling, and classification.
+    - **Technologies Used:** tidytext, quanteda, and topicmodels for tokenization, TF-IDF, bigram, and Bing/NRC sentiment analysis and LDA topic modeling, with tidymodels/klaR Naive Bayes classifiers for rating prediction.
+    - **Results:** LDA topic modeling split Nike consumer discourse into four themes led by Sneaker Style & Fit at 41.00%; Bing sentiment analysis of 365,179 Airbnb description tokens found positive language outnumbering negative by roughly two to one across all nine countries; and the Nike review classifier's reported 86.20% accuracy was found to be a majority-class artifact (kappa of 0.00), predicting every held-out review as "Low" rated.
+
 ## Contributing
 
 Contributions are welcome! If you would like to contribute to this repository. Any improvements, bug fixes, or additional projects are greatly appreciated.
