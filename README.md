@@ -32,6 +32,11 @@ As a Business Analytics student at Hult, I've pivoted from building tools to unc
     - **Technologies Used:** Random Forest, XGBoost, KNN, and a custom Residual MLP neural network, with cross-city feature scaling, pseudo-labeling, and spatial smoothing for the unlabeled target city.
     - **Results:** A Residual MLP reached a macro F1 score of 0.90 on Rio de Janeiro, and a pseudo-labeled tree ensemble reached a cross-validated F1 of 0.86 on Freetown, with building density and NDBI identified as the strongest predictors of urban heat.
 
+6. [E-commerce Recommendation Engine](https://github.com/hillary-mupfumi/data-science-repo/tree/main/E-commerce%20Recommendation%20Engine)
+    - **Description:** A product recommendation engine is built and evaluated on the UCI Online Retail dataset of 541,909 real UK gift-retailer transactions, comparing a popularity baseline against item-based collaborative filtering and ALS matrix factorization.
+    - **Technologies Used:** Item-based collaborative filtering via cosine similarity on a co-purchase matrix, and ALS matrix factorization on implicit purchase-quantity feedback, evaluated under a leave-last-basket-out protocol.
+    - **Results:** ALS matrix factorization reached a Precision@10 of 5.26% and a MAP@10 of 2.64%, more than three times the popularity baseline's Precision@10 of 1.68%, confirming that purchase-history-based personalization adds real value over recommending bestsellers to everyone.
+
 ## Contributing
 
 Contributions are welcome! If you would like to contribute to this repository. Any improvements, bug fixes, or additional projects are greatly appreciated.
