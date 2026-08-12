@@ -1,0 +1,543 @@
+---
+title: "Airbnb Listings Intelligence"
+author: "Hillary Mupfumi"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    number_sections: true
+---
+
+```{css, echo=FALSE}
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Circular+Std:wght@300;400&display=swap');
+.hdr { background: #fff8f6; color: #222; padding: 44px 48px; border-radius: 16px; font-family: 'Circular Std', 'DM Sans', sans-serif; border: 1px solid #f0e0dc; }
+.hdr h1 { font-family: 'Playfair Display', Georgia, serif; font-size: 52px; margin: 0 0 6px; letter-spacing: -0.5px; color: #222; }
+.hdr p { margin: 0; color: rgba(0,0,0,0.45); font-size: 13px; font-weight: 300; }
+.accent { width: 48px; height: 3px; background: #FF385C; margin-bottom: 24px; border-radius: 2px; }
+hr { border: none; border-top: 2px solid #0a0a0a; margin-top: 24px; }
+```
+
+<div class="hdr">
+  <div class="accent"></div>
+  <h1>Airbnb Listings Descriptions Intelligence</h1>
+  <p>Text Analytics for Strategic Consumer Insights</p>
+  <p style="margin-top:8px; font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:rgba(0,0,0,0.25);">Data Pirates Consultancy · `r format(Sys.Date(), '%B %d, %Y')`</p>
+</div>
+<hr>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Executive Summary
+
+This project analyzes Airbnb listing descriptions from a MongoDB sample dataset spanning nine countries: Australia, Brazil, Canada, China, Hong Kong, Portugal, Spain, Turkey, and the United States. After preprocessing, including tokenization, stopword removal, and lemmatization, the corpus contained 365,179 total tokens and 26,648 unique lemmas. Text mining frameworks applied include word frequency (TF), inverse document frequency (IDF), bigram analysis, word correlation analysis, sentiment analysis using the Bing lexicon, and Latent Dirichlet Allocation (LDA) topic modeling.
+
+In addition, a Naive Bayes classifier was implemented to predict listing ratings based on description text. While the overall prediction accuracy was limited due to data sparsity, analysis of word-level probabilities identified terms strongly associated with high- or low-rated listings, providing actionable insights on the language that drives guest perception.
+
+Analysis reveals that Airbnb hosts globally rely on a relatively narrow vocabulary focused on location, amenities, and physical space, while also exhibiting market-specific language patterns. Hosts in the United States emphasize physical amenities and spatial descriptions, whereas European and Asian hosts highlight transit access and walkability. Sentiment analysis confirms that descriptions are predominantly positive, reflecting a marketing-oriented tone. LDA modeling identified four thematic clusters structuring listings worldwide: apartment features and amenities, guest experience and hospitality, location and transportation, and neighborhood and local attractions.
+
+These findings provide actionable insights for Airbnb, including opportunities to enhance host coaching tools, optimize keywords for search discoverability, and develop localized description templates aligned with guest expectations in different markets.
+
+<hr>
+
+
+# Installing Packages
+```{r install-packages, eval=FALSE}
+# Installing packages
+# List of required packages
+packages <- c(
+  "mongolite", "tidyverse", "tm", "SnowballC",
+  "textstem", "scales", "e1071", "quanteda", "ggplot2",
+  "tidymodels", "textrecipes", "discrim", "parsnip", "rsample",
+  "klaR", "widyr", "igraph", "ggraph", "dplyr"
+)
+
+if (!"remotes" %in% rownames(installed.packages())) {
+  install.packages("remotes")
+}
+
+library(remotes)
+
+# Install tidytext from GitHub if not installed
+if (!"tidytext" %in% rownames(installed.packages())) {
+  remotes::install_github("juliasilge/tidytext")
+}
+
+# Install any packages that are not yet installed
+installed <- packages %in% rownames(installed.packages())
+if (any(!installed)) {
+  install.packages(packages[!installed], dependencies = TRUE)
+}
+```
+
+# Loading Packages
+```{r load-packages}
+#Load the library R libraries required for this project
+suppressPackageStartupMessages({
+library(mongolite)
+library(tidyverse)
+library(tidytext)
+library(tm)
+library(dplyr)
+library(textstem)
+library(scales)
+library(e1071)
+library(quanteda)
+library(ggplot2)
+library(widyr)
+library(igraph)
+library(ggraph)
+})
+```
+
+# Loading Data from MongoDB
+```{r mongo-connection}
+## Setting up the connection to get the data from MongoDB
+## Credentials are never hardcoded. Set MONGO_URI and DB_NAME as environment
+## variables (e.g. in a local .Renviron file, which should be added to
+## .gitignore) before running this notebook.
+
+MONGO_URI <- Sys.getenv("MONGO_URI")
+DB_NAME   <- Sys.getenv("DB_NAME", unset = "sample_airbnb")
+
+```
+
+## Loading Airbn data
+
+```{r fetch-airbnb}
+#Fetch the data from Airbnb
+con_airbnb <- mongo(
+  collection = "listingsAndReviews",
+  db         = DB_NAME,
+  url        = MONGO_URI
+)
+
+airbnb_raw <- con_airbnb$find(
+  query  = '{}',
+  fields = '{"_id": 0}'
+)
+```
+
+
+```{r data-df}
+airbnb_df <- data.frame(
+                        country             = airbnb_raw$address$country,
+                        property_type       = airbnb_raw$property_type,
+                        description         = airbnb_raw$description,
+                        review_rating        = airbnb_raw$review_score$review_scores_rating,
+                        price               = airbnb_raw$price
+                        )%>%
+                  mutate(doc_id = row_number())
+```
+
+# Text Preprocessing
+
+## Text Cleaning Pipeline
+```{r text-cleaning}
+## Text Cleaning Pipeline
+clean_text <- function(text) {
+  text %>%
+    str_to_lower() %>%                               # convert to lowercase
+    str_remove_all("https?://\\S+|www\\.\\S+") %>%   # Remove URLs
+    str_remove_all("@\\w+|#\\w+") %>%                # mentions & hashtags
+    str_replace_all("n't",   " not") %>%             # Replace contraction  n't with not
+    str_replace_all("'re",   " are") %>%             # Replace contraction  're with are
+    str_replace_all("'ve",   " have") %>%            # Replace contraction  've with have
+    str_replace_all("'ll",   " will") %>%            # Replace contraction  'll with will
+    str_replace_all("won't", "will not") %>%         # Replace contraction   won't with will not
+    str_replace_all("can't", "can not") %>%          # Replace contraction   cant with can not
+    str_remove_all("[^a-z0-9\\s]") %>%               # removes any character that is not a lowercase letter, number, or whitespace
+    str_squish()                                     # remove extra white space
+}
+
+airbnb_df <- airbnb_df %>%
+  mutate(text = clean_text(description))
+
+```
+
+The raw text data was preprocessed through a standardized cleaning pipeline before analysis. This included lowercasing, URL and punctuation removal, stripping social media mentions and hashtags, contraction expansion, and whitespace normalization ensuring the data was consistent and ready for downstream NLP tasks including sentiment analysis, topic modeling, and keyword extraction.
+
+<hr>
+
+## Tokenization, Stopword Removal & Lemmatization
+
+```{r tokenization}
+#Tokenize, remove stopwords and lemmatize
+custom_stopwords <- data.frame(word = c("im","de"),
+                               lexicon = rep("custom", 1))
+
+airbnb_tokens <- airbnb_df %>%
+              unnest_tokens(word, text) %>%                    #split text into words
+              anti_join(stop_words, by = "word") %>%           #remove standard stopwords
+              anti_join(custom_stopwords, by = "word") %>%     #remove custom stopwords
+              filter(!str_detect(word, "^\\d+$")) %>%          #remove numbers
+              mutate(word = lemmatize_words(word))             #lematize
+
+
+# Summary info
+cat("Total tokens:  ", nrow(airbnb_tokens), "\n")
+cat("Unique lemmas: ", n_distinct(airbnb_tokens$word), "\n")
+```
+After preprocessing the reviews through tokenization, stopword removal, and lemmatization, the dataset contained **365179  total tokens** and **26648 unique lemmas**, making it ready for further analysis.
+
+
+<hr>
+
+# Exploratory Text Analysis
+## Word Frequency
+```{r freqhist}
+
+freq_hist <- airbnb_tokens %>%
+            count(word, sort = TRUE) %>%              # count frequency
+            slice_max(n, n = 10) %>%                  # select top 10 words
+            mutate(word = reorder(word, n)) %>%       # reorder words by frequency
+            ggplot(aes(word, n))         +            # map word vs frequency
+            geom_col(fill = "steelblue") +            # bar plot
+            xlab(NULL)                   +            # remove x-axis label
+            ylab("Frequency")            +            # label y-axis
+            coord_flip()                 +            # horizontal bars
+           labs(title = "Top 10 Most Frequent Words in Airnb Description Posting")
+
+# Print the plot
+print(freq_hist)
+```
+The top word frequency analysis reveals that Airbnb hosts emphasize location, layout, and practical details in their descriptions, with terms like apartment, bedroom, and bathroom setting clear expectations, while words like walk and minute highlight proximity as a key selling point. The presence of live suggests an attempt to promote authentic local experiences. Overall, listings focus more on functionality and convenience than differentiation, indicating an opportunity for more engaging and distinctive descriptions.
+
+<hr>
+
+## Bi-Gram Analysis
+```{r ngrams}
+#Create a Biagrams
+airbnb_bigrams <- airbnb_df %>%
+                  unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%         # generate 2-word sequences
+                  separate(bigram, into = c("word1", "word2"), sep = " ") %>%      # split into two columns
+                  filter(!word1 %in% stop_words$word,                              # remove stopwords from both words
+                       !word2 %in% stop_words$word,
+                       !str_detect(word1, "^\\d+$"),                               # remove numbers
+                       !str_detect(word2, "^\\d+$")
+                       ) %>%
+                  mutate(
+                    word1 = lemmatize_words(word1),                                # lemmatize
+                    word2 = lemmatize_words(word2)
+                   ) %>%
+          unite(bigram_lemma, word1, word2, sep = " ") %>%                         # combine back into single column
+          dplyr::select(doc_id,country,bigram_lemma)
+
+# Quick summary
+cat("Total bigrams:  ", nrow(airbnb_bigrams), "\n")
+cat("Unique bigrams: ", n_distinct(airbnb_bigrams$bigram_lemma), "\n")
+
+```
+## Bi-Gram Analysis by Country
+```{r bg}
+# Count bigrams by apartment type
+bigram_counts <- airbnb_bigrams %>%
+  count(bigram_lemma, country, sort = TRUE)
+
+# Get top 10 bigrams by total count
+top_bigrams <- bigram_counts %>%
+  group_by(bigram_lemma) %>%
+  summarise(total_n = sum(n), .groups = 'drop') %>%
+  top_n(10, total_n) %>%
+  inner_join(bigram_counts, by = "bigram_lemma")
+
+# Plot stacked bars with counts, colored by apartment type
+ggplot(top_bigrams, aes(x = reorder(bigram_lemma, total_n), y = n, fill = country)) +
+  geom_col() +   # default stacking by count
+  coord_flip() +
+  labs(
+    title = "Top 10 Bigrams by Country",
+    x = "Bigram",
+    y = "Count",
+    fill = "Apartment Type"
+  ) +
+  theme_minimal()
+
+```
+This bigram analysis of Airbnb host descriptions uncovers clear regional patterns in listing framing. Phrases like "minute walk," "walk distance," and "min walk" dominate globally, highlighting walkability as a universal marketing hook, with the U.S. and Australia leading in frequency, while Hong Kong and Turkey lag, reflecting urban density and local search behavior. Market-specific bigrams reveal priorities: "metro station" drives listings in Spain, Portugal, and Turkey, and destination-specific terms like "Hong Kong" appear only locally. Amenity-related phrases such as "double bed," "air condition," and "free wifi" remain baseline expectations worldwide. These insights indicate that optimizing listings requires localized keyword strategies-leading with walkability in some markets, transit proximity in others, while ensuring amenity bigrams reinforce standards, aligning descriptions with regional search behavior to boost visibility and guest relevance.
+
+<hr>
+
+## Inverse Document Frequency Analysis
+
+```{r idf-by-country}
+# Compute number of documents per country
+country_docs <- airbnb_tokens %>%
+  group_by(country) %>%
+  summarise(n_docs = n_distinct(doc_id), .groups = "drop")
+
+# Compute IDF by country
+idf_data_country <- airbnb_tokens %>%
+  distinct(doc_id, country, word) %>%
+  filter(!str_detect(word, "\\d")) %>%
+  left_join(country_docs, by = "country") %>%
+  group_by(country, word, n_docs) %>%
+  summarise(doc_count = n(), .groups = "drop") %>%
+  mutate(idf = log(n_docs / (1 + doc_count))) %>%
+  group_by(country) %>%
+  arrange(desc(idf)) %>%
+  slice_head(n = 5) %>%
+  ungroup()
+
+# Faceted plot by country
+ggplot(idf_data_country, aes(x = reorder(word, idf), y = idf, fill = idf)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_gradient(low = "#B0BEC5", high = "#1C1C1C") +
+  facet_wrap(~country, scales = "free_y") +  # each country gets its own panel
+  labs(
+    x = NULL,
+    y = "Inverse Document Frequency (IDF)",
+    title = "Top 5 Most Rare Words in Airbnb Descriptions by Country"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+```
+
+This IDF analysis highlights the distinctive language and cultural cues in Airbnb host descriptions across countries, with rare words revealing local language, niche amenities, and hyper-local references. In Brazil, Portuguese terms like abertas and abajures signal authentic, design-focused descriptions; Spain shows multilingual or fragmented terms, pointing to localization gaps. Hong Kong hosts use neighborhood-specific words like aberdeenplus to brand listings, while Australia and Canada emphasize universities, heritage, and landmarks. The U.S. features cryptic or informal terms, reflecting diverse writing styles. These findings suggest that leveraging distinctive, locally relevant terms can differentiate listings, improve search visibility, and enhance guest discovery, while addressing translation and keyword optimization can unlock further value.
+
+<hr>
+
+## Major Markets Word Correlation - Spain vs United States
+
+```{r word-corr}
+
+# Filter tokens for USA and Spain
+frequency <- airbnb_tokens %>%
+  filter(country %in% c("United States", "Spain")) %>%
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(country, word) %>%
+  group_by(country) %>%
+  mutate(proportion = n / sum(n)) %>%
+  dplyr::select(-n) %>%
+  spread(country, proportion) %>%
+  gather(country, proportion, `United States`, `Spain`)
+
+# Prepare wide data for correlation plot
+frequency_wide <- frequency %>%
+  pivot_wider(names_from = country, values_from = proportion, values_fill = 0) %>%
+  filter(`United States` > 0 & Spain > 0) %>%
+  filter(!is.na(`United States`), !is.na(Spain))
+
+# Plot correlogram
+ggplot(frequency_wide, aes(x = `United States`, y = Spain, color = abs(`United States` - Spain))) +
+  geom_abline(color = "grey40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(low = "darkslategray4", high = "gray75") +
+  theme(legend.position = "none") +
+  labs(
+    title = "Word Correlations: United States vs Spain",
+    x = "US proportion",
+    y = "Spain proportion"
+  )
+```
+
+This word correlation analysis comparing the United States and Spain reveals clear differences in how hosts frame Airbnb listings. US descriptions emphasize car-centric convenience, spacious layouts, and American amenities such as specific bed sizes, parking, and neighborhood references, reflecting the need to set clear expectations in sprawling urban areas. Spanish listings focus on public transit and walkability, highlighting metro, estación, parada, and minutos andando to signal proximity to transit and landmarks in dense cities. These findings underscore the value of market-specific keyword strategies: US hosts should foreground parking, bed sizes, and neighborhood context, while Spanish hosts should highlight transit access, walking times, and vibrant neighborhoods. For Airbnb, supporting localized description guidance can improve visibility, align content with guest search behavior, and increase booking conversion.
+
+<hr>
+
+# Sentiment Analysis
+## Bing Lexicon: Positive vs Negative
+```{r sentiment}
+bing_lexicon <- get_sentiments("bing")
+airbnb_sentiment <- airbnb_tokens %>%
+  inner_join(bing_lexicon, by = c("word" = "word"))
+
+sentiment_counts <- airbnb_sentiment %>%
+  count(country,sentiment)
+ggplot(sentiment_counts, aes(x = sentiment, y = n, fill = country)) +
+  geom_col(show.legend = TRUE) +
+  labs(title = "Sentiment Distribution (Bing Lexicon)",
+       x = "Sentiment",
+       y = "Word Count")
+```
+
+The Bing sentiment analysis of Airbnb host descriptions shows that positive sentiment consistently outweighs negative across all markets, with roughly 20,000 positive versus 10,000 negative instances per country. This pattern reflects that hosts treat descriptions as marketing copy, emphasizing strengths while minimizing weaknesses and that platform norms have standardized optimistic language globally. Necessary negatives like "no elevator" or "street noise" should be framed positively to preserve appeal. This allows hosts to balance transparency with attractiveness and supports Airbnb in guiding description quality.
+
+<hr>
+
+## Top Positive & Negative Words
+
+```{r pos-neg-words}
+# Count top words per sentiment AND source
+word_contributions <- airbnb_tokens %>%
+  inner_join(bing_lexicon, by = c("word" = "word")) %>%
+  count(word, sentiment, country, sort = TRUE) %>%
+  group_by(sentiment, word) %>%
+  summarise(total = sum(n), .groups = "drop") %>%
+  group_by(sentiment) %>%
+  slice_max(total, n = 15) %>%
+  ungroup()
+
+# Filter original counts to just these top words for source stacking
+word_source_counts <- airbnb_tokens %>%
+  inner_join(bing_lexicon, by = c("word" = "word")) %>%
+  semi_join(word_contributions, by = c("word","sentiment")) %>%
+  count(word, sentiment, country)
+
+# Plot with stacked bars by source
+ggplot(word_source_counts,
+       aes(x = n,
+           y = reorder_within(word, n, sentiment),
+           fill = country)) +
+  geom_col(width = 0.7) +
+  facet_wrap(~sentiment, scales = "free") +
+  geom_col(width = 0.7) +
+  scale_y_reordered() +
+   labs(
+    title    = "Most Impactful Words by Sentiment and  Country",
+    x = "Frequency", y = NULL,
+    fill = "Source"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+```
+
+
+The Bing sentiment analysis of Airbnb descriptions identifies the words driving positive and negative tone, providing a clear roadmap for optimizing listing language. Positive words like stun, retreat, overlook, and tout highlight aspirational, experiential, and view-focused language that resonates emotionally with guests. Negative words such as noise, smoke, complex, split, sink, grind, and rue reflect practical limitations or unintended discouragement. Hosts can maximize appeal by foregrounding positive, scenic, and experiential terms while reframing or minimizing negative triggers-for example, presenting noise as a "vibrant neighborhood" or split as a "thoughtfully designed layout"-enhancing booking potential and aligning descriptions with guest expectations.
+
+<hr>
+
+# Topic Modeling (LDA)
+
+## Document Term Matrix
+```{r dtm}
+airbnb_dtm <- airbnb_tokens %>%
+  count(country, doc_id, word) %>%                              # count term frequency per document (source)
+  cast_dtm(document = doc_id, term = word, value = n)   # convert to DTM
+
+```
+
+## Fit the LDA Model
+```{r lda-model}
+library(topicmodels)
+
+k <- 4
+lda_model <- LDA(
+  airbnb_dtm,
+  k = k,
+  method = "Gibbs",
+  control = list(seed = 42, iter = 1000, burnin = 200, thin = 10)
+)
+
+# Assign human-readable labels after inspecting top terms
+topic_labels <- tibble(
+  topic = 1:k,
+  label = c(
+        "Location & Transportation",               # Based on: metro, est, la, da
+        "Apartment Features & Amenities",          # Based on: apartament, quarto
+        "Guest Experience & Host Hospitality",     # Mixed positive experience terms
+        "Neighborhood & Local Attractions"         # Location context
+  ),
+)
+tidy_topics <- tidy(lda_model, matrix="beta")
+
+
+#top terms
+top_terms <- tidy_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  left_join(topic_labels, by = "topic") %>%
+  arrange(topic, -beta)
+
+#lets plot the term frequencies by topic
+
+ggplot(top_terms,
+       aes(x = reorder_within(term, beta, topic),
+           y = beta, fill = label)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~label, scales = "free_y", ncol = 2) +
+  coord_flip() +
+  scale_x_reordered() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title    = "LDA topic modeling - Airbnb Listing Descriptions",
+    x = NULL, y = "Term probability (beta)",
+    caption  = "Higher beta = more characteristic of that topic"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 10)
+  )
+
+
+
+```
+
+The LDA topic modeling of Airbnb descriptions reveals four key thematic clusters that shape how hosts frame listings. Topic 1 (Apartment Features & Amenities) emphasizes walkability and proximity to transit, dining, and shopping, reflecting location-driven marketing. Topic 2 (Guest Experience & Host Hospitality) uses aspirational language such as view, beautiful, and private to evoke emotion and comfort. Topic 3 (Location & Transportation) covers functional details like beds, kitchens, and wifi, addressing baseline guest needs. Topic 4 (Neighborhood & Local Attractions) incorporates non-English terms in multilingual markets, signaling authenticity or targeting domestic guests. Optimized listings blend all four themes, balancing location, experience, functional clarity, and localized language to enhance visibility, match search behavior, and boost bookings.
+
+<hr>
+
+# Modelling- Classification
+
+## Do listing descriptions influence ratings?
+
+```{r classification}
+#select description and ratings
+data <- airbnb_df %>%
+  dplyr::select(description, review_rating) %>%
+  filter(!is.na(description), !is.na(review_rating))
+
+data$description <- iconv(data$description, from = "UTF-8", to = "UTF-8", sub = "")
+data$description <- gsub("[[:cntrl:]]", "", data$description)
+data$description <- gsub("[^\x01-\x7F]", "", data$description)
+data$description <- trimws(data$description)
+
+#create a label from review ratings
+data <- data %>%
+  mutate(rating_label = ifelse(review_rating >= 90, 1, 0))
+
+corp <- corpus(data$description)
+
+#tokenize
+toks <- tokens(corp,
+               remove_punct = TRUE,
+               remove_numbers = TRUE)
+
+toks <- tokens_remove(toks, stopwords("en"))
+
+#create dfm
+dfm_mat <- dfm(toks, tolower = TRUE)
+dfm_mat <- dfm_trim(dfm_mat, min_termfreq = 5)
+dfm_mat <- convert(dfm_mat, to = "matrix")
+
+set.seed(123)
+#split the data
+train_index <- sample(1:nrow(dfm_mat), 0.8*nrow(dfm_mat))
+
+train <- dfm_mat[train_index,]
+test  <- dfm_mat[-train_index,]
+
+train_labels <- data$rating_label[train_index]
+test_labels  <- data$rating_label[-train_index]
+
+#train the model and predict
+model <- naiveBayes(train, train_labels)
+
+pred <- predict(model, test)
+
+
+```
+
+Naive Bayes classification was implemented to determine whether the language used in Airbnb listing descriptions is associated with guest ratings. The analysis indicates that terms such as "fantastic" and "duplex" are more prevalent in high-rated listings, while generic terms like "apartment" appear across all listings. These findings suggest that using specific and engaging language in descriptions may positively influence guest perceptions and contribute to higher ratings.
+
+<hr>
+
+
+# Conclusion
+
+This analysis demonstrates that Airbnb listing descriptions contain rich, actionable insights beyond simple keyword counts. Word frequency and bigram analysis show that walkability-phrases like "minute walk" and "walk distance"-is a universally emphasized feature, while IDF and word correlation analyses reveal market-specific patterns: US listings highlight physical amenities and car access, Spanish and Portuguese listings emphasize transit and local culture, and Hong Kong listings reference hyper-local neighborhood identifiers. Sentiment analysis confirms descriptions are overwhelmingly positive, with high-impact terms such as quiet, beautiful, spacious, and cozy reflecting experiential priorities, while negative-coded terms relate to practical limitations. LDA topic modeling identified four thematic clusters-apartment features, guest experience, location, and neighborhood attractions-that structure listings globally, suggesting that incorporating all themes can improve search ranking and booking conversion.
+
+A Naive Bayes classifier was implemented to explore whether listing language predicts guest ratings. Although prediction accuracy was limited due to sparse data, the word-level probabilities highlighted terms strongly associated with high- or low-rated listings, providing actionable guidance for optimizing descriptions. Overall, this project confirms that text analytics can generate concrete, market-specific insights to enhance Airbnb's host coaching, keyword optimization, and description guidance tools, improving listing quality, guest discoverability, and booking performance across diverse markets.

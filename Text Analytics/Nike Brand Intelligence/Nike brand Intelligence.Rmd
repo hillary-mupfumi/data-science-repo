@@ -1,0 +1,988 @@
+---
+title: "Nike Brand Intelligence"
+author: "Team 9"
+date: "`r Sys.Date()`"
+
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    number_sections: true
+
+---
+```{css, echo=FALSE}
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400&display=swap');
+.hdr { background: #0a0a0a; color: #fff; padding: 44px 48px; border-radius: 4px; font-family: 'DM Sans', sans-serif; }
+.hdr h1 { font-family: 'Bebas Neue', sans-serif; font-size: 58px; margin: 0 0 6px; letter-spacing: 1px; }
+.hdr p { margin: 0; color: rgba(255,255,255,0.5); font-size: 13px; font-weight: 300; }
+.accent { width: 48px; height: 3px; background: #ff3c00; margin-bottom: 24px; border-radius: 2px; }
+hr { border: none; border-top: 2px solid #0a0a0a; margin-top: 24px; }
+```
+
+<div class="hdr">
+  <div class="accent"></div>
+  <h1>Nike Brand Intelligence</h1>
+  <p>Text Analytics for Strategic Consumer Insights</p>
+  <p style="margin-top:8px; font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:rgba(255,255,255,0.25);">Data Pirates · Team 9 · `r format(Sys.Date(), '%B %d, %Y')`</p>
+</div>
+<hr>
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Executive Summary
+
+An analysis of consumer discourse across sustainability, pricing, and competitive positioning provides insights into how Nike is perceived and identifies strategic opportunities for brand action. Using an end-to-end natural language processing pipeline in R, large-scale unstructured text data was collected from Reddit sneaker communities, YouTube product reviews, and X (Twitter) mentions. Sentiment analysis, topic modeling (LDA), TF-IDF differentiation, and keyword co-occurrence network analysis were applied to extract actionable intelligence across four dimensions: brand perception, product quality, sustainability narrative, and competitive positioning.
+
+Nike maintains strong emotional loyalty, with comfort and trust emerging as dominant consumer themes. Operational issues, such as sizing inconsistencies, are evident through recurring terms like "half size" and "wide foot," highlighting areas that require operational attention rather than marketing intervention. Pricing perception is divided, with some consumers accepting Nike's premium positioning while others question whether quality justifies cost, reflected in the co-occurrence of terms such as "premium" and "worth" alongside "expensive" and "cheap." Sustainability awareness exists but trust remains limited; discussions focus on generic terms such as "green" and "carbon," with minimal engagement around ethical production or recyclability, indicating a need for product-level substantiation of sustainability claims rather than broad messaging.
+
+Competitive analysis shows Adidas narrowing the gap in design and cultural relevance. TF-IDF analysis indicates that Adidas discussions emphasize specific product lines such as Yeezy and Ultraboost, fostering a collector-driven identity with clear differentiation. Nike's language, in contrast, remains experiential and tactile, anchored in terms such as "lace," "sole," and "comfortable," representing a defensible equity advantage. Topic modeling reveals that Sneaker Style and Fit account for 41% of consumer discourse, followed by Product Experience and Comfort at 29%, together constituting the primary drivers of engagement. Digital Content and Athlete Endorsement represent just 10% of conversations, suggesting limited organic impact relative to product-focused themes. Platform dynamics differ, with Reddit serving as a hub for enthusiast-driven discussions around drops and aesthetics, while YouTube users adopt a more evaluative posture, frequently benchmarking Nike against competitors.
+
+The analysis points to three strategic imperatives: first, reframe the pricing narrative around craftsmanship and durability to strengthen value perception; second, substantiate sustainability claims at the product level to bridge the awareness-trust gap; third, reinforce performance heritage and comfort as the primary drivers of brand loyalty. These insights derive from publicly available unstructured text data and carry inherent sampling limitations; they are intended to inform, not replace, formal primary consumer research.
+
+
+<hr>
+
+## Installing Packages
+```{r install-packages, eval=FALSE}
+# Installing packages
+# List of required packages
+packages <- c(
+  "mongolite", "tidyverse", "tm", "SnowballC",
+  "textstem", "scales", "e1071", "quanteda", "ggplot2",
+  "tidymodels", "textrecipes", "discrim", "parsnip", "rsample",
+  "klaR", "widyr", "igraph", "ggraph", "dplyr"
+)
+
+if (!"remotes" %in% rownames(installed.packages())) {
+  install.packages("remotes")
+}
+
+library(remotes)
+
+# Install tidytext from GitHub if not installed
+if (!"tidytext" %in% rownames(installed.packages())) {
+  remotes::install_github("juliasilge/tidytext")
+}
+
+# Install any packages that are not yet installed
+installed <- packages %in% rownames(installed.packages())
+if (any(!installed)) {
+  install.packages(packages[!installed], dependencies = TRUE)
+}
+```
+
+## Loading Packages
+```{r load-packages}
+#Load the library R libraries required for this project
+suppressPackageStartupMessages({
+library(mongolite)
+library(tidyverse)
+library(tidytext)
+library(tm)
+library(dplyr)
+library(textstem)
+library(scales)
+library(e1071)
+library(quanteda)
+library(ggplot2)
+library(tidymodels)
+library(textrecipes)
+library(discrim)
+library(parsnip)
+library(rsample)
+library(klaR)
+library(widyr)
+library(igraph)
+library(ggraph)
+})
+```
+
+## Loading Data from MongoDB
+```{r mongo-connection}
+## Setting up the connection to get the data from MongoDB
+## Credentials are never hardcoded. Set MONGO_URI and DB_NAME as environment
+## variables (e.g. in a local .Renviron file, which should be added to
+## .gitignore) before running this notebook.
+
+MONGO_URI <- Sys.getenv("MONGO_URI")
+DB_NAME   <- Sys.getenv("DB_NAME", unset = "nike_reviews_db")
+
+```
+
+## Loading Reddit Collection
+
+```{r fetch-reddit}
+#Fetch the reviews data from reddit collection of nike_reviews_db in MongoDB
+con_reddit <- mongo(
+  collection = "nike_reviews_reddit",
+  db         = DB_NAME,
+  url        = MONGO_URI
+)
+
+nike_reddit_raw <- con_reddit$find(
+  query  = '{}',
+  fields = '{"_id": 0}'
+)
+
+```
+
+## Loading Youtube Collection
+
+```{r fetch-youtube}
+
+#Fetch the reviews data from youtube collection of nike_reviews_db in MongoDB
+con_youtube <- mongo(
+  collection = "nike_reviews_youtube",
+  db         = DB_NAME,
+  url        = MONGO_URI
+)
+
+nike_youtube_raw <- con_youtube$find(
+  query  = '{}',
+  fields = '{"_id": 0}'
+)
+
+```
+
+## Combine the Data
+```{r combine-sources}
+
+#Creating a reddit dataframe with comment, score and location information
+reddit_df <- nike_reddit_raw %>%
+  transmute(
+    comment = comment,
+    score   = as.numeric(score),
+    source  = "Reddit"
+  )
+
+#Creating a youtube dataframe with comment, score and location information
+youtube_df <- nike_youtube_raw %>%
+  transmute(
+    comment = comment,
+    score   = as.numeric(score),
+    source  = "YouTube"
+  )
+
+# combine data
+all_data <- bind_rows(reddit_df, youtube_df) %>%
+  filter(!is.na(comment), nchar(trimws(comment)) > 15) %>%
+  distinct(comment, .keep_all = TRUE) %>%
+  mutate(
+    doc_id = row_number(),
+    source = factor(source)
+  )
+```
+
+## Descriptive Statistics
+
+```{r data-summary}
+#Descriptive Statistics
+df_summary <- all_data %>%
+  group_by(source) %>%
+  summarise(
+    documents    = n(),
+    avg_score    = round(mean(score, na.rm = TRUE), 1)
+  )
+##Print the dataset summary
+
+print(df_summary)
+
+```
+# Text Preprocessing
+
+## Text Cleaning Pipeline
+```{r text-cleaning}
+## Text Cleaning Pipeline
+clean_text <- function(text) {
+  text %>%
+    str_to_lower() %>%                               # convert to lowercase
+    str_remove_all("https?://\\S+|www\\.\\S+") %>%   # Remove URLs
+    str_remove_all("@\\w+|#\\w+") %>%                # mentions & hashtags
+    str_replace_all("n't",   " not") %>%             # Replace contraction  n't with not
+    str_replace_all("'re",   " are") %>%             # Replace contraction  're with are
+    str_replace_all("'ve",   " have") %>%            # Replace contraction  've with have
+    str_replace_all("'ll",   " will") %>%            # Replace contraction  'll with will
+    str_replace_all("won't", "will not") %>%         # Replace contraction   won't with will not
+    str_replace_all("can't", "can not") %>%          # Replace contraction   cant with can not
+    str_remove_all("[^a-z0-9\\s]") %>%               # removes any character that is not a lowercase letter, number, or whitespace
+    str_squish()                                     # remove extra white space
+}
+
+all_data <- all_data %>%
+  mutate(text = clean_text(comment))
+
+```
+
+The raw text data was preprocessed through a standardized cleaning pipeline before analysis. This included lowercasing, URL and punctuation removal, stripping social media mentions and hashtags, contraction expansion, and whitespace normalization ensuring the data was consistent and ready for downstream NLP tasks including sentiment analysis, topic modeling, and keyword extraction.
+
+<hr>
+
+## Tokenization, Stopword Removal & Lemmatization
+
+```{r tokenization}
+#Tokenize, remove stopwords and lemmatize
+custom_stopwords <- data.frame(word = c("im"),
+                               lexicon = rep("custom", 1))
+
+nike_tokens <- all_data %>%
+              unnest_tokens(word, text) %>%                    #split text into words
+              anti_join(stop_words, by = "word") %>%           #remove standard stopwords
+              anti_join(custom_stopwords, by = "word") %>%     #remove custom stopwords
+              filter(!str_detect(word, "^\\d+$")) %>%          #remove numbers
+              mutate(word_lemma = lemmatize_words(word)) %>%   #lemmatize
+              dplyr:: select(doc_id, source,word_lemma,score)   %>%    #keep doc_id, word lemma and source
+              rename(word = word_lemma)
+
+# Summary info
+cat("Total tokens:  ", nrow(nike_tokens), "\n")
+cat("Unique lemmas: ", n_distinct(nike_tokens$word), "\n")
+```
+The reviews were further preprocessed by performing tokenization, removing stopwords, and lemmatization, resulting in a total of 17,199 tokens with 4,102 unique lemmas ready for downstream analysis.
+
+<hr>
+# Exploratory Data Analysis
+## Word Frequency
+```{r freqhist}
+
+freq_hist <- nike_tokens %>%
+            count(word, sort = TRUE) %>%              # count frequency
+            slice_max(n, n = 10) %>%                  # select top 10 words
+            mutate(word = reorder(word, n)) %>%       # reorder words by frequency
+            ggplot(aes(word, n))         +            # map word vs frequency
+            geom_col(fill = "steelblue") +            # bar plot
+            xlab(NULL)                   +            # remove x-axis label
+            ylab("Frequency")            +            # label y-axis
+            coord_flip()                 +            # horizontal bars
+           labs(title = "Top 10 Most Frequent Words in Nike Reviews")
+
+# Print the plot
+print(freq_hist)
+```
+
+Analysis of top word frequencies shows that Nike reviews are predominantly functional and fit-focused. Terms like shoe, pair, size, and foot dominate, indicating that customers evaluate Nike primarily on comfort and fit consistency. The presence of comfortable in the top 10 emphasizes cushioning and feel as key purchase drivers, while run reinforces performance as a core strength. Positive words such as love and buy suggest strong emotional attachment and repeat purchase intent. The main operational risk is sizing, which appears frequently, pointing to inconsistencies across product lines that require immediate attention from the VP of Product
+
+<hr>
+
+## Bi-Gram Analysis
+
+```{r ngrams}
+#Create a Biagrams
+nike_bigrams <- all_data %>%
+                unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%         # generate 2-word sequences
+                separate(bigram, into = c("word1", "word2"), sep = " ") %>%      # split into two columns
+                filter(!word1 %in% stop_words$word,                              # remove stopwords from both words
+                       !word2 %in% stop_words$word,
+                       !str_detect(word1, "^\\d+$"),                             # remove numbers
+                       !str_detect(word2, "^\\d+$")
+                       ) %>%
+                mutate(
+                  word1 = lemmatize_words(word1),                                # lemmatize
+                  word2 = lemmatize_words(word2)
+                ) %>%
+
+  unite(bigram_lemma, word1, word2, sep = " ") %>%                               # combine back into single column
+  dplyr::select(doc_id,source,bigram_lemma)
+
+# Quick summary
+cat("Total bigrams:  ", nrow(nike_bigrams), "\n")
+cat("Unique bigrams: ", n_distinct(nike_bigrams$bigram_lemma), "\n")
+
+```
+```{r nike_bigrams}
+#visualise top 10 words that appears in pear
+bigram_counts <- nike_bigrams %>%
+  count(bigram_lemma, sort = TRUE)
+top_bigrams <- bigram_counts %>% top_n(10, n)
+
+ggplot(top_bigrams, aes(x = reorder(bigram_lemma, n), y = n)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Nike Bigrams",
+    x = "Bigram",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+```
+
+Nike review bigrams reveal strong focus on performance and fit, with "Air Max," "Run Shoe," and "Basketball Shoe" leading mentions. There appears to be Comfort concerns with lines like "Wide Foot," "Half Size," and "Toe Box," appearing frequently.Premium lines like "Vomero Premium" and "Pegasus Premium" appears in the top 10 likely showing customer's interest in high-end models. Brand terms like "Nike Air" appear, but conversations center on specific models rather than the brand overall. Overall, customers prioritize performance, fit, and model-specific features, guiding product and marketing strategies.
+
+<hr>
+
+## Document Term Matrix
+
+```{r}
+nike_dtm <- nike_tokens %>%
+  count(source, word) %>%                              # count term frequency per document (source)
+  cast_dtm(document = source, term = word, value = n)  # convert to DTM
+
+print(nike_dtm)
+```
+The Nike reviews DTM contains 2 documents and 4,102 unique terms, with 38% sparsity, indicating many words appear in both documents. The longest term has 35 characters, and entries reflect raw term frequencies. This matrix provides a structured view of the text, enabling analysis of common words and phrases to uncover patterns in how customers describe Nike products.
+
+<hr>
+
+## Word Correlations
+```{r wordcorr}
+ frequency <- nike_tokens %>%
+              mutate(word=str_extract(word, "[a-z']+")) %>%
+              count(source, word) %>%
+              group_by(source) %>%
+              mutate(proportion = n/sum(n))%>%
+              dplyr::select(-n) %>%
+              spread(source, proportion) %>%
+              gather(source, proportion, `YouTube`, `Reddit`)
+
+#plot the correlograms:
+frequency_wide <- frequency %>%
+  pivot_wider(names_from = source, values_from = proportion, values_fill = 0) %>%
+  filter(YouTube > 0 & Reddit > 0)
+ggplot(frequency_wide, aes(x = YouTube, y = Reddit, color = abs(YouTube - Reddit))) +
+  geom_abline(color = "grey40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position = "none") +
+  labs(title = "Word Correlations accross Platforms",x = "Youtube proportion", y = "Reddit proportion")
+
+
+
+```
+
+Words near the diagonal including "shoe," "pair," "wear," "buy," "nike," "foot," and "comfortable"  appear consistently across both Reddit and YouTube, confirming these as universal themes in Nike's consumer language regardless of platform. Above the diagonal, Reddit-dominant terms like "collection," "space," "drop," and "colorway" reveal a more enthusiast-driven audience focused on product releases and aesthetics. Below the diagonal, YouTube skews toward terms like "design," "vomero," "brand," and "compare," suggesting viewers are more evaluation-oriented and competitive in their thinking. Strategically, Nike should tailor its content accordingly, feeding Reddit's sneaker culture with drop and collection narratives, while positioning YouTube content around product differentiation and performance benchmarks against competitors.
+
+<hr>
+
+```{r pairwise}
+
+nike_pairwise <- nike_tokens %>%
+  pairwise_count(item = word,
+                 feature = doc_id,
+                 sort = TRUE,
+                 upper = FALSE)
+nike_pairwise %>%
+  filter(n > 5) %>%
+  arrange(desc(n)) %>%
+  slice_head(n = 20) %>%
+  unite(pair, item1, item2, sep = " — ") %>%
+  ggplot(aes(x = reorder(pair, n), y = n)) +
+  geom_col(fill = "#0a0a0a") +
+  coord_flip() +
+  labs(title = "Top Word Co-occurrences in Nike Reviews", x = NULL, y = "Co-occurrence Count") +
+  theme_minimal()
+```
+
+Based on word co-occurences analysis "Shoe" dominates all co-occurrences, confirming that product experience and brand perception are inseparable in consumer language meaning quality issues carry direct reputational risk. "Air — max" stands out as a distinct product conversation, while "half - size" , again is a consistent flag for sizing inconsistency.
+
+## Inverse Document Frequency Analysis
+
+```{r idf}
+
+N_docs <- n_distinct(nike_tokens$doc_id)
+
+idf_data <- nike_tokens %>%
+  distinct(doc_id, word) %>%
+  filter(!str_detect(word, "\\d")) %>%
+  count(word, name = "doc_count") %>%
+  mutate(idf = log(N_docs / (1 + doc_count))) %>%
+  arrange(desc(idf)) %>%
+  slice_head(n = 20)
+
+# Plot
+idf_data %>%
+  ggplot(aes(x = reorder(word, idf), y = idf, fill = idf)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_gradient(low = "#B0BEC5", high = "#1C1C1C") +
+  labs(
+    x = NULL,
+    y = "Inverse Document Frequency (IDF)",
+    title = "Top 20 Most Rare Words in Nike Reviews",
+    caption = "Source: Reddit + YouTube"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+
+```
+
+IDF analysis revealed rare words exhibiting high IDF scores, indicating they occur in only a small number of documents but carry significant specificity. Terms such as "ache," "achillis," and "accupressure" may be pointing to niche yet potentially serious physical discomforts, and similary words like "abercrombie" and "acostumbrados" could be a cross-brand comparisons and engagement from non-English-speaking customer segments. These low-frequency terms merit closer examination, as rare words can reveal emerging complaints, underserved audiences, or early trend signals that conventional high-frequency analyses may overlook.
+
+<hr>
+
+
+## Sentiment Analysis
+### Bing Lexicon: Positive vs Negative
+```{r sentiment}
+bing_lexicon <- get_sentiments("bing")
+nike_sentiment <- nike_tokens %>%
+  inner_join(bing_lexicon, by = c("word" = "word"))
+sentiment_counts <- nike_sentiment %>%
+  count(source,sentiment)
+ggplot(sentiment_counts, aes(x = sentiment, y = n, fill = source)) +
+  geom_col(show.legend = TRUE) +
+  labs(title = "Sentiment Distribution (Bing Lexicon)",
+       x = "Sentiment",
+       y = "Word Count")
+```
+
+Sentiment analysis using the Bing lexicon indicates an overall positive skew. YouTube shows a relatively balanced distribution (around 850 positive and negative words), while Reddit has roughly 500 more positive than negative words, suggesting stronger positivity. However, these results should be interpreted cautiously, as the Bing lexicon is context-independent and cannot capture nuances like sarcasm, negation, or platform-specific language. This may lead to oversimplified or inflated positivity, especially on Reddit. Therefore, further analysis using more context-aware methods is needed to validate these findings.
+
+<hr>
+
+## Top Positive & Negative Words
+
+```{r pos-neg-words}
+# Count top words per sentiment AND source
+word_contributions <- nike_tokens %>%
+  inner_join(bing_lexicon, by = c("word" = "word")) %>%
+  count(word, sentiment, source, sort = TRUE) %>%
+  group_by(sentiment, word) %>%
+  summarise(total = sum(n), .groups = "drop") %>%
+  group_by(sentiment) %>%
+  slice_max(total, n = 15) %>%
+  ungroup()
+
+# Filter original counts to just these top words for source stacking
+word_source_counts <- nike_tokens %>%
+  inner_join(bing_lexicon, by = c("word" = "word")) %>%
+  semi_join(word_contributions, by = c("word","sentiment")) %>%
+  count(word, sentiment, source)
+
+# Plot with stacked bars by source
+ggplot(word_source_counts,
+       aes(x = n,
+           y = reorder_within(word, n, sentiment),
+           fill = source)) +
+  geom_col(width = 0.7) +
+  facet_wrap(~sentiment, scales = "free") +
+  geom_col(width = 0.7) +
+  #scale_x_continuous(breaks = seq(0, 150, by = 25), expand = expansion(mult = c(0, 0.1))) +
+  scale_y_reordered() +
+  scale_fill_manual(values = c("Reddit" = "#1565C0", "YouTube" = "#E65100")) +
+  labs(
+    title    = "Most Impactful Words by Sentiment and Source",
+    subtitle = "Nike brand conversations on Reddit and YouTube",
+    x = "Frequency", y = NULL,
+    fill = "Source"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+
+"Love" and "comfortable" dominate positive sentiment, particularly on YouTube, highlighting comfort and emotional attachment as Nike's strongest brand assets. On the negative side, "bad," "hard," "ugly," and "expensive" lead, with Reddit contributing disproportionately to criticism of pricing and aesthetics. The simultaneous appearance of "expensive" and "cheap" underscores a value perception gap customers perceive Nike as both overpriced and sometimes low quality signaling that pricing and product strategy should be addressed together.
+
+<hr>
+
+
+## NRC Emotion Analysis
+```{r nrc-emotions}
+# Load NRC lexicon
+nrc_lexicon <- get_sentiments("nrc") %>%
+   filter(sentiment %in% c("joy", "anger", "trust", "anticipation"))
+
+# Join with tokens
+nike_sentiment <- nike_tokens %>%
+  inner_join(nrc_lexicon, by = c("word" = "word"), relationship = "many-to-many")
+
+# Count by source and sentiment (emotion)
+sentiment_counts <- nike_sentiment %>%
+  count(source, sentiment)
+
+# Plot
+ggplot(sentiment_counts, aes(x = sentiment, y = n, fill = source)) +
+  geom_col(show.legend = TRUE) +
+  labs(title = "Sentiment Distribution (NRC Lexicon)",
+       x = "Sentiment / Emotion",
+       y = "Word Count") +
+  theme(axis.text.x = element_text(angle = 360, hjust = 1))
+
+```
+
+
+Trust is the dominant emotion in Nike's consumer language with the highest word count across both platforms signaling that brand credibility remains Nike's most powerful emotional asset. Anticipation ranks second, reflecting strong engagement around product drops and new releases. Joy and anger are comparably sized, suggesting that while customers express genuine enthusiasm, a meaningful undercurrent of frustration exists that should not be overlooked. Reddit contributes a consistently higher share of anger relative to YouTube, reinforcing its role as the more critical, vocal consumer community.
+
+<hr>
+
+
+# Topic Modeling (LDA)
+
+
+## Fitting the LDA Model
+```{r lda-model}
+library(topicmodels)
+
+k <- 4
+lda_model <- LDA(
+  nike_dtm,
+  k = k,
+  method = "Gibbs",
+  control = list(seed = 42, iter = 1000, burnin = 200, thin = 10)
+)
+
+# Assign human-readable labels after inspecting top terms
+topic_labels <- tibble(
+  topic = 1:k,
+  label = c(
+    "Product Experience & Comfort",
+    "Sneaker Style & Fit",
+    "Retail & Sneaker Culture",
+    "Digital Content & Athlete Endorsement"
+  )
+)
+tidy_topics <- tidy(lda_model, matrix="beta")
+
+
+#top terms
+top_terms <- tidy_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  left_join(topic_labels, by = "topic") %>%
+  arrange(topic, -beta)
+
+#lets plot the term frequencies by topic
+
+ggplot(top_terms,
+       aes(x = reorder_within(term, beta, topic),
+           y = beta, fill = label)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~label, scales = "free_y", ncol = 2) +
+  coord_flip() +
+  scale_x_reordered() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title    = "LDA topic modeling - Nike brand conversations",
+    x = NULL, y = "Term probability (beta)",
+    caption  = "Higher beta = more characteristic of that topic"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 10)
+  )
+
+
+
+```
+
+Topic modeling of Nike consumer conversations reveals that Product Experience & Comfort dominates discussions, confirming it as the core driver of engagement. Sneaker Style & Fit captures the emotional and aesthetic appeal, with terms like "love," "Air," "Jordan," and "lace" reflecting deep brand attachment. Retail & Sneaker Culture highlights a niche but highly engaged audience focused on collector behavior, resale, and product drops, while Digital Content & Athlete Endorsement shows low beta values, suggesting that endorsements generate awareness but limited organic consumer dialogue. Overall, comfort and experience drive core conversations, style and culture engage passionate segments, and endorsement ROI may be less measurable through text analysis alone.
+
+<hr>
+
+
+## Document-Topic Distribution
+
+```{r doc-topic-dist}
+
+topic_gamma_summary <- tidy(lda_model, matrix = "gamma") %>%
+  mutate(topic = as.integer(topic)) %>%
+  left_join(topic_labels, by = "topic") %>%
+  group_by(label) %>%
+  summarise(
+    total_gamma = sum(gamma),     # total contribution of this topic across all docs
+    avg_gamma   = mean(gamma),    # average contribution per doc
+    n_docs      = n(),             # number of rows (documents) contributing
+    .groups = "drop"
+  ) %>%
+  mutate(pct_total = total_gamma / sum(total_gamma))
+
+ggplot(topic_gamma_summary, aes(x = reorder(label, pct_total), y = pct_total, fill = label)) +
+  geom_col(width = 0.6, show.legend = FALSE) +  # make bars thinner
+  geom_text(aes(label = percent(pct_total, accuracy = 1)),
+            hjust = -0.1, size = 3.5) +         # adjust text size if needed
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Topic contribution across all documents",
+    x = NULL,
+    y = "Proportion of total topic weight"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.text.y = element_text(size = 11)
+  )
+```
+
+
+Sneaker Style & Fit dominates at 41% of total topic weight, making it the single most prevalent conversation theme across the conversations, confirming that aesthetics, fit, and style are what consumers lead with when discussing Nike. Product Experience & Comfort at 29% reinforces comfort as the secondary but critical driver, together accounting for 70% of all consumer discourse. Retail & Sneaker Culture at 20% reflects a sizable collector and resale-oriented segment that Nike should actively cultivate given its high engagement value. Digital Content & Athlete Endorsement trails at just 10%, suggesting that despite significant investment in athlete marketing, it generates the least organic consumer conversation — a signal worth examining when evaluating endorsement strategy ROI.
+
+<hr>
+
+# Business-Driven Text Analytics
+
+## TF-IDF Brand Differentiation
+
+```{r tfidf}
+# Compare Nike vs Adidas vs Under Armour distinctive language
+# (Adidas/UA tokens come from Reddit threads where competitors are mentioned)
+brand_tokens <- nike_tokens %>%
+  mutate(
+    brand_label = case_when(
+      str_detect(tolower(all_data$comment[doc_id]),
+                 "adidas|ultraboost|yeezy") ~ "Adidas",
+      str_detect(tolower(all_data$comment[doc_id]),
+                 "under armour|hovr|ua ") ~ "Under Armour",
+      TRUE ~ "Nike"
+    )
+  )
+
+tfidf_brands <- brand_tokens %>%
+  count(brand_label, word) %>%
+  bind_tf_idf(word, brand_label, n) %>%
+  group_by(brand_label) %>%
+  slice_max(tf_idf, n = 15) %>%
+  slice_head(n=15) %>%
+  ungroup()
+
+ggplot(tfidf_brands,
+       aes(x = reorder_within(word, tf_idf, brand_label),
+           y = tf_idf, fill = brand_label)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~brand_label, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  scale_fill_manual(values = c(
+    "Nike"         = "#111111",
+    "Adidas"       = "#1565C0",
+    "Under Armour" = "#B71C1C"
+  )) +
+  labs(
+    title    = "TF-IDF brand language differentiation",
+    subtitle = "Most distinctive terms per brand",
+    x = NULL, y = "TF-IDF score",
+    caption  = "Higher = more unique to that brand's discussions"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(size = 7)
+  )
+```
+
+Nike's brand language is experiential and sensory with words like "wear," "lace," "color," "sole," "comfortable," and "love" defining its distinctive vocabulary, reflecting a consumer base that talks about how products feel and look in use. Adidas conversation is dominated by product line names like "yeezy," "ultraboost," "vomero," and "adizero", indicating stronger product-specific identity and collector culture. Under Armour's distinctive terms are strikingly negative including "suffer," "metatarsal," "egregiously," and "deficiency", signaling serious product quality and injury-related complaints that represent a competitive vulnerability Nike should monitor and contrast against in its own messaging. Overall, Nike's differentiated language skews positive and tactile, which is a meaningful brand equity advantage over both competitors.
+
+<hr>
+
+## Keyword Co-occurrence Network
+```{r cooccurrence-network, fig.height=7}
+co_occur <- nike_tokens %>%
+  count(doc_id, word) %>%
+  group_by(word) %>%
+  filter(sum(n) >= 4) %>%
+  ungroup() %>%
+  pairwise_count(word, doc_id, sort = TRUE, upper = FALSE)
+
+co_top <- co_occur %>% head(60)
+
+g <- graph_from_data_frame(
+  d        = co_top %>% rename(from = item1, to = item2, weight = n),
+  directed = FALSE
+)
+V(g)$degree <- degree(g)
+
+ggraph(g, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = weight, edge_width = weight),
+                 color = "gray50", show.legend = FALSE) +
+  geom_node_point(aes(size = degree), color = "#111111", alpha = 0.8) +
+  geom_node_text(aes(label = name, size = degree),
+                 repel = TRUE, color = "#333333", max.overlaps = 20) +
+  scale_size_continuous(range = c(3, 10), guide = "none") +
+  scale_edge_width_continuous(range = c(0.3, 2)) +
+  labs(
+    title    = "Nike brand keyword co-occurrence network",
+    subtitle = "Words frequently appearing together in the same document"
+  ) +
+  theme_graph(base_family = "sans") +
+  theme(plot.title = element_text(face = "bold", size = 14))
+
+```
+
+
+The network confirms "shoe," "nike," "wear," "pair," and "buy" as the dense central cluster and the core of Nike's consumer language, meaning brand and product are inseparable in how customers talk about Nike and any product quality issue carries direct reputational consequence. "Size," "true," "fit," and "half" forming a distinct satellite cluster is a clear operational signal that sizing inconsistency is a persistent, standalone concern warranting a dedicated product fix rather than a marketing response. "Air," "max," "vomero," and "premium" sitting on the periphery suggests these lines have a loyal but niche following, presenting an opportunity to deepen engagement with high-value collector segments through targeted content and drop strategies. "Price" appearing loosely connected to the core rather than centrally embedded is a cautiously positive signal, as pricing frustration exists but has not yet become the defining lens through which most customers evaluate the brand.
+
+<hr>
+
+## Pricing & Sustainability Flags
+
+```{r pricing-sustainability-flags}
+pricing_words <- c("overpriced","expensive","costly","pricey","afford","cheap","value","worth","premium","budget")
+sustain_words <- c("sustainable","sustainability","eco","green","recycle","carbon","ethical","greenwash","environment","planet")
+
+all_data %>%
+  unnest_tokens(word, comment) %>%
+  filter(word %in% c(pricing_words, sustain_words)) %>%
+  mutate(topic = case_when(
+    word %in% pricing_words ~ "Pricing",
+    word %in% sustain_words ~ "Sustainability"
+  )) %>%
+  count(topic, word, sort = TRUE) %>%
+  group_by(topic) %>%
+  slice_head(n = 10) %>%
+  ggplot(aes(x = reorder_within(word, n, topic), y = n, fill = topic)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  scale_fill_manual(values = c("Pricing" = "#E65100", "Sustainability" = "#2E7D32")) +
+  labs(title = "Top 10 Pricing & Sustainability Terms",
+       subtitle = "Frequency of key terms in Nike documents",
+       x = NULL, y = "Count") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold"))
+
+```
+
+Pricing language is far more prevalent and diverse than sustainability language, with "premium," "expensive," "cheap," and "worth" leading consumer discourse, signaling that value perception is an active and multidimensional concern for Nike customers. The co-existence of "premium" and "cheap" in the same corpus suggests a split customer base: one that accepts Nike's premium positioning and another that questions whether the quality justifies the price. On sustainability, only "green" and "carbon" register with meaningful frequency and the gap between the two is stark, indicating that Nike's sustainability conversation is extremely narrow and largely surface-level with no organic consumer engagement around deeper terms like "ethical," "recycle," or "greenwash." This is a strategic gap Nike should address by making sustainability messaging more specific and product-level rather than relying on broad environmental language.
+
+<hr>
+# Classification Model
+
+```{r classification}
+#Classification Model
+reviews_df <- all_data %>%
+  mutate(
+    star_category = case_when(
+      score <= 2 ~ "Low",
+      score == 3 ~ "Medium",
+      score > 3  ~ "High"
+    )
+  ) %>%
+  dplyr:: select(text, star_category) %>%
+  mutate(star_category = factor(star_category, levels = c("Low", "Medium", "High")))
+
+
+```
+
+## Test Train Split
+```{r train-test-split}
+set.seed(123)
+data_split <- initial_split(reviews_df, prop = 0.8, strata = star_category)
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+```
+
+## Naive Bayes classifier
+
+
+```{r train-naivebayes}
+
+# Define the Naive Bayes model
+nb_model <- naive_Bayes(mode = "classification") %>%
+  set_engine("klaR")
+
+# Preprocessing recipe
+rec <- recipe(star_category ~ text, data = train_data) %>%
+  step_tokenize(text) %>%    # split into words
+  step_stopwords(text) %>%   # remove stopwords
+  step_tokenfilter(text, max_tokens = 800) %>%
+  step_tfidf(text)
+
+# Combine into a workflow
+wf <- workflow() %>%
+  add_model(nb_model) %>%
+  add_recipe(rec)
+
+# Fit the model
+nb_fit <- fit(wf, data = train_data)
+
+
+```
+
+```{r predict}
+##This stage need some few minutes to run
+predictions <- predict(nb_fit, test_data) %>%
+  bind_cols(test_data %>%
+  dplyr:: select(star_category))
+```
+
+```{r model_eval}
+# Confusion matrix
+print(conf_mat(predictions, truth = star_category, estimate = .pred_class))
+
+# Metrics
+print(metrics(predictions, truth = star_category, estimate = .pred_class))
+```
+The model shows an overall accuracy of 86.2%, but the confusion matrix shows every test observation was predicted as "Low," so the model is not distinguishing classes: it is simply riding the fact that "Low" is the majority class in this sample. A kappa of 0 confirms that its performance is no better than chance once class imbalance is accounted for. This means the headline accuracy figure is not usable on its own; the model needs a rebalanced training sample (e.g. up/down-sampling or class weights) or a larger, more evenly distributed set of labeled reviews before it can be trusted to flag Medium- or High-risk reviews.
+
+<hr>
+
+# Limitations and Analytical Caveats
+
+- Sampling bias: the collected data may not represent all Nike customers.
+- Platform bias: Reddit and YouTube users may differ from the broader customer base.
+- Lexicon limitations: Bing sentiment may miss sarcasm, slang, and sneaker-community language.
+- Keyword-based issue flags are directional indicators rather than exact classifications.
+- Online conversations may contain repetition, exaggeration, and off-topic noise.
+
+# Conclusion
+
+This analysis demonstrates that Nike remains a highly engaging and emotionally resonant brand, with strong positive associations centered on comfort, design, and overall product experience. Across both Reddit and YouTube data sources, consumers consistently express appreciation for Nike's style, innovation, and brand identity.
+
+However, the findings also highlight several emerging risks that require strategic attention. Pricing-related language frequently appears in negative sentiment clusters, suggesting that premium pricing may be creating friction among value-sensitive consumers. In addition, recurring complaints related to product quality, sizing consistency, and durability indicate potential operational gaps that could affect long-term customer retention.
+
+Sustainability messaging represents another area of mixed perception. While Nike is actively communicating sustainability initiatives, some consumers question the credibility of these claims, raising concerns about potential "greenwashing" perceptions. This indicates a need for more transparent, evidence-based communication.
+
+From a competitive standpoint, the analysis suggests that Nike maintains a strong emotional brand position, but faces increasing pressure from competitors such as Adidas and Under Armour, particularly in areas where product value and messaging clarity are critical.
+
+Overall, the results suggest that Nike should continue leveraging its strong brand equity while taking targeted actions to address pricing communication, product quality consistency, and sustainability credibility. By aligning operational improvements with clearer and more authentic messaging, Nike can strengthen its competitive position and enhance long-term customer loyalty.
+
+# Apendix
+## Data Pipeline Script
+
+```{r data-pipeline, eval=FALSE}
+
+# ================================
+# 1. INSTALL & LOAD PACKAGES
+# ================================
+packages <- c(
+  "rvest", "tuber", "RedditExtractoR",
+  "httr2", "jsonlite", "tidyverse",
+  "mongolite", "purrr"
+)
+
+install.packages(setdiff(packages, rownames(installed.packages())))
+lapply(packages, library, character.only = TRUE)
+
+# ================================
+# 2. MONGODB CONNECTION STRING
+# ================================
+# Credentials are never hardcoded. Set MONGO_URI as an environment variable
+# (e.g. in a local .Renviron file, which should be added to .gitignore)
+# before running this script.
+mongo_conn_str <- Sys.getenv("MONGO_URI")
+
+reddit_con <- mongo(
+  collection = "nike_reviews_reddit",
+  db = "nike_reviews_db",
+  url = mongo_conn_str
+)
+
+youtube_con <- mongo(
+  collection = "nike_reviews_youtube",
+  db = "nike_reviews_db",
+  url = mongo_conn_str
+)
+
+# ================================
+# 3. REDDIT DATA COLLECTION
+# ================================
+nike_urls <- find_thread_urls(
+  keywords = "Nike",
+  subreddit = "Sneakers",
+  sort_by = "new"
+)
+
+# Function to safely fetch comments
+get_reddit_comments <- function(urls) {
+  data <- get_thread_content(urls)
+  data$comments
+}
+
+# Fetch batches
+comments_1 <- get_reddit_comments(nike_urls$url[1:50])
+comments_2 <- get_reddit_comments(nike_urls$url[51:150])
+comments_3 <- get_reddit_comments(nike_urls$url[151:223])
+
+# Combine
+reddit_comments <- bind_rows(comments_1, comments_2, comments_3)
+
+# Insert into MongoDB
+reddit_con$insert(reddit_comments)
+
+# Retrieve from MongoDB
+nike_reddit <- reddit_con$find()
+
+# ================================
+# 4. YOUTUBE DATA COLLECTION
+# ================================
+# Credentials are never hardcoded. Set YOUTUBE_API_KEY as an environment
+# variable (e.g. in a local .Renviron file, which should be added to
+# .gitignore) before running this script.
+api_key <- Sys.getenv("YOUTUBE_API_KEY")
+
+# Search videos
+search_res <- request("https://www.googleapis.com/youtube/v3/search") |>
+  req_url_query(
+    part = "snippet",
+    q = "Nike sneaker review",
+    type = "video",
+    maxResults = 50,
+    key = api_key
+  ) |>
+  req_perform() |>
+  resp_body_json(simplifyVector = TRUE)
+
+videos <- as_tibble(search_res$items) %>%
+  transmute(
+    video_id = id$videoId,
+    video_title = snippet$title
+  )
+
+# Function to fetch comments
+get_youtube_comments <- function(v_id) {
+  tryCatch({
+    request("https://www.googleapis.com/youtube/v3/commentThreads") |>
+      req_url_query(
+        part = "snippet",
+        videoId = v_id,
+        maxResults = 50,
+        textFormat = "plainText",
+        key = api_key
+      ) |>
+      req_perform() |>
+      resp_body_json(simplifyVector = TRUE) %>%
+      pluck("items", "snippet", "topLevelComment", "snippet") %>%
+      as_tibble() %>%
+      select(
+        author = authorDisplayName,
+        comment = textDisplay,
+        score = likeCount
+      ) %>%
+      mutate(video_id = v_id)
+  }, error = function(e) NULL)
+}
+
+# Fetch all YouTube comments
+youtube_comments <- map_dfr(videos$video_id, get_youtube_comments) %>%
+  left_join(videos, by = "video_id")
+
+# Insert into MongoDB
+youtube_con$insert(youtube_comments)
+
+# Retrieve from MongoDB
+nike_youtube <- youtube_con$find()
+
+# ================================
+# 5. DATA CLEANING & MERGING
+# ================================
+nike_reddit_clean <- nike_reddit %>%
+  mutate(source = "reddit") %>%
+  select(comment, score, source)
+
+nike_youtube_clean <- nike_youtube %>%
+  mutate(source = "youtube") %>%
+  select(comment, score, source)
+
+# Combine datasets
+all_data <- bind_rows(nike_reddit_clean, nike_youtube_clean) %>%
+  filter(!is.na(comment), comment != "")
+
+```
+
+<hr>
